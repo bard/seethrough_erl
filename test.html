@@ -1,0 +1,25 @@
+<html xmlns="http://www.w3.org/1999/xhtml"
+      xmlns:e="http://dev.hyperstruct.net/seethrough">
+  <head>
+    <title e:val="title"/>
+  </head>
+  <body>
+    <h1 e:val="title"/>
+
+    <h2 e:val="subtitle"/>
+
+    <table>
+      <thead>
+        <tr>
+          <th>Address</th>
+          <th>Name</th>
+        </tr>
+      </thead>
+      <tbody e:with="crew"><tr>
+          <td e:val="address"/>
+          <td e:val="name"/>
+        </tr>
+      </tbody>
+    </table>
+  </body>
+</html>
