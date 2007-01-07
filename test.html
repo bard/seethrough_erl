@@ -15,9 +15,10 @@
           <th>Name</th>
         </tr>
       </thead>
-      <tbody e:with="crew"><tr>
-          <td e:val="address"/>
-          <td e:val="name"/>
+      <tbody>
+        <tr e:repeat="crew">
+          <td e:content="address"/>
+          <td e:content="name"/>
         </tr>
       </tbody>
     </table>

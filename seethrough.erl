@@ -45,7 +45,14 @@ apply_template(File, Env) ->
 
 
 visit([Node | Rest], Env) ->
-    [ visit(Node, Env) | visit(Rest, Env) ];
+    NHead = visit(Node, Env),
+    NTail = visit(Rest, Env),
+    if
+        is_list(NHead) ->
+            NHead ++ NTail;
+        true ->
+            [ NHead | NTail ]
+    end;
 visit([], _Env) ->
     [];    
 visit(Node, Env) when is_record(Node, xmlElement) ->
@@ -72,16 +79,13 @@ visit(_Node = #xmlElement{attributes =
     #xmlText{value = VarValue};
 
 visit(Node = #xmlElement{attributes =
-                         [#xmlAttribute{name = 'e:with',
-                                        value = ContextName} | Rest]},
+                         [#xmlAttribute{name = 'e:repeat',
+                                        value = ContextName} | RAttributes]},
       Attributes, Env) ->
+    {value, CloneEnvs} = env_lookup(ContextName, Env),
 
-    [FirstChild | RestChild] = Node#xmlElement.content,
-    {value, ChildEnvs} = env_lookup(ContextName, Env),
-
-    NContent = [ visit(FirstChild, ChildEnv) ||
-                   ChildEnv <- ChildEnvs] ++ RestChild,
-    visit(Node#xmlElement{content = NContent, attributes = Rest}, Attributes, Env);
+    [ visit(Node#xmlElement{attributes = RAttributes}, Attributes, CloneEnv)
+      || CloneEnv <- CloneEnvs ];
 
 visit(Node = #xmlElement{attributes = [Attr | Rest]}, Attributes, Env) ->
     visit(Node#xmlElement{attributes = Rest}, [Attr | Attributes], Env);
