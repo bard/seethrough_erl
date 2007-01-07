@@ -56,13 +56,20 @@ visit(Node, _Env) ->
     Node.
 
 visit(Node = #xmlElement{attributes =
-                         [#xmlAttribute{name = 'e:val',
+                         [#xmlAttribute{name = 'e:content',
                                         value = VarName} | Rest]},
       Attributes, Env) ->
     {value, VarValue} = env_lookup(VarName, Env),
     visit(Node#xmlElement{content = [#xmlText{value = VarValue}],
                           attributes = Rest},
           Attributes, Env);
+
+visit(_Node = #xmlElement{attributes =
+                         [#xmlAttribute{name = 'e:replace',
+                                        value = VarName} | _RAttributes]},
+      _Attributes, Env) ->
+    {value, VarValue} = env_lookup(VarName, Env),
+    #xmlText{value = VarValue};
 
 visit(Node = #xmlElement{attributes =
                          [#xmlAttribute{name = 'e:with',
