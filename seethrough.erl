@@ -5,15 +5,35 @@
 %%%
 %%% Created :  25 Dec 2006 by Massimiliano Mirra
 %%%            <bard [at] hyperstruct [dot] net>
+%%% License :
+%%%
+%%%  Copyright (C) 2006-2007 by Massimiliano Mirra
+%%%
+%%%  This program is free software; you can redistribute it and/or
+%%%  modify it under the terms of the GNU General Public License as
+%%%  published by the Free Software Foundation; either version 2 of
+%%%  the License, or (at your option) any later version.
+%%%
+%%%  This program is distributed in the hope that it will be useful,
+%%%  but WITHOUT ANY WARRANTY; without even the implied warranty of
+%%%  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+%%%  GNU General Public License for more details.
+%%%
+%%%  You should have received a copy of the GNU General Public License
+%%%  along with this program; if not, write to the Free Software
+%%%  Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
+%%%  02110-1301 USA
+%%%
 %%%-------------------------------------------------------------------
+
 -module(seethrough).
 
 -include("/usr/lib/erlang/lib/xmerl-1.0.5/include/xmerl.hrl").
 -compile(export_all).
 
-%%% ----------------------------------------------------------------------
+%%%-------------------------------------------------------------------
 %%% Example
-%%% ----------------------------------------------------------------------
+%%%-------------------------------------------------------------------
 
 test() ->
     io:format(
@@ -34,9 +54,9 @@ get_crew() ->
       {name, "Doc"}]].
 
 
-%%% ----------------------------------------------------------------------
+%%%-------------------------------------------------------------------
 %%% Main
-%%% ----------------------------------------------------------------------
+%%%-------------------------------------------------------------------
 
 apply_template(File, Env) ->
     {Tree, _Misc} = xmerl_scan:file(File),
@@ -95,9 +115,9 @@ visit(Node = #xmlElement{attributes = []}, Attributes, Env) ->
                     content = visit(Node#xmlElement.content, Env)}.
 
 
-%%% ----------------------------------------------------------------------
+%%%-------------------------------------------------------------------
 %%% Utilities
-%%% ----------------------------------------------------------------------
+%%%-------------------------------------------------------------------
 
 env_lookup(VarName, Env) when is_list(VarName) ->
     env_lookup(list_to_atom(VarName), Env);
