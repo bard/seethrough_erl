@@ -6,7 +6,11 @@
   <body>
     <h1 e:content="title"/>
 
-    <h2><span e:replace="subtitle"/></h2>
+    <h2>
+      <e:attr name="style">font-weight: bold;</e:attr>
+      <e:attr name="align"><span e:replace="alignment"/></e:attr>
+      <span e:replace="subtitle"/>
+    </h2>
 
     <table>
       <thead>

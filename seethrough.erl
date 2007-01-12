@@ -39,6 +39,7 @@ test() ->
     io:format(
       apply_template("test.html", 
           [{title, "Space"},
+           {alignment, "center"},
            {subtitle, {?MODULE, get_subtitle, []}},
            {crew, {?MODULE, get_crew, []}}])).
 
@@ -62,7 +63,6 @@ apply_template(File, Env) ->
     {Tree, _Misc} = xmerl_scan:file(File),
     xmerl:export_simple(
       [visit(Tree, Env)], xmerl_xml).
-
 
 visit([Node | Rest], Env) ->
     NHead = visit(Node, Env),
@@ -107,12 +107,23 @@ visit(Node = #xmlElement{attributes =
     [ visit(Node#xmlElement{attributes = RAttributes}, Attributes, CloneEnv)
       || CloneEnv <- CloneEnvs ];
 
+visit(Node = #xmlElement{name = 'e:attr',
+                         attributes = Attributes}, _Attributes, Env) ->
+    {value, AttrForName} = lists:keysearch(name, #xmlAttribute.name, Attributes),
+    [Content] = visit(Node#xmlElement.content, Env),
+    #xmlAttribute{name = list_to_atom(AttrForName#xmlAttribute.value),
+                  value = Content#xmlText.value};
+
 visit(Node = #xmlElement{attributes = [Attr | Rest]}, Attributes, Env) ->
     visit(Node#xmlElement{attributes = Rest}, [Attr | Attributes], Env);
 
 visit(Node = #xmlElement{attributes = []}, Attributes, Env) ->
-    Node#xmlElement{attributes = Attributes,
-                    content = visit(Node#xmlElement.content, Env)}.
+    {ResultAttributes, ResultContent} = 
+        lists:partition(fun(N) -> is_record(N, xmlAttribute) end,
+                        visit(Node#xmlElement.content, Env)),    
+    Node#xmlElement{attributes = Attributes ++ ResultAttributes,
+                    content = ResultContent}.
+
 
 
 %%%-------------------------------------------------------------------
