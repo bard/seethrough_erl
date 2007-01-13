@@ -41,7 +41,8 @@ test() ->
           [{title, "Space"},
            {alignment, "center"},
            {subtitle, {?MODULE, get_subtitle, []}},
-           {crew, {?MODULE, get_crew, []}}])).
+           {background_color, "blue_skies"},
+           {crew, {? MODULE, get_crew, []}}])).
 
 get_subtitle() ->
     "The last frontier...".
@@ -118,12 +119,68 @@ visit(Node = #xmlElement{attributes =
     [ visit(Node#xmlElement{attributes = RAttributes}, Attributes, CloneEnv)
       || CloneEnv <- CloneEnvs ];
 
+%%--------------------------------------------------------------------
+%% Transform an <e:attr> element into an attribute that will be
+%% received by the parent element.
+%%
+%% The "name" attribute of the <e:attr> element tells the name of the
+%% attribute that will be set in the parent.  For example, an element
+%% such as:
+%%
+%%   <div><e:attr name="class"/></div>
+%%
+%% Will cause the parent <div> to acquire a "class" attribute.
+%%
+%% The value of the attribute can be specified via the content of the
+%% <e:attr> element.  For example, in:
+%%
+%%   <div><e:attr name="class">shiny</e:attr></div>
+%%
+%% The <div> will acquire the "class" attribute with the "shiny"
+%% value:
+%%
+%%   <div class="shiny"/>
+%%
+%% The content of the <e:attr> element is transformed as usual.  For
+%% example, in:
+%%
+%%   <div><e:attr name="class"><span e:replace="cl"/></e:attr></div>
+%%
+%% The content of <e:attr> will be given by the transformation of
+%% <span e:replace="cl"/>, which in turn is given by the environment
+%% lookup for the "cl" value.  If the "cl" value is "dark", the first
+%% transformation will be:
+%%
+%%   <div><e:attr name="class">dark</e:attr></div>
+%%
+%% And the next one:
+%%
+%%   <div class="dark"/>
+%%
+%% As a shortcut, non-complex values can be passed via a "value"
+%% attribute in the <e:attr> element instead of its content.  The
+%% following is equivalent to the previous example:
+%%
+%%   <div><e:attr name="class" value="cl"/></div>
+%% 
+%%--------------------------------------------------------------------
+
 visit(Node = #xmlElement{name = 'e:attr',
                          attributes = Attributes}, _Attributes, Env) ->
     {value, AttrForName} = lists:keysearch(name, #xmlAttribute.name, Attributes),
-    [Content] = visit(Node#xmlElement.content, Env),
-    #xmlAttribute{name = list_to_atom(AttrForName#xmlAttribute.value),
-                  value = Content#xmlText.value};
+    Name = list_to_atom(AttrForName#xmlAttribute.value),
+
+    Value = 
+        case lists:keysearch(value, #xmlAttribute.name, Attributes) of
+            {value, AttrForValue} ->
+                VarName = list_to_atom(AttrForValue#xmlAttribute.value),
+                {value, VarValue} = env_lookup(VarName, Env),
+                VarValue;
+            false ->
+                [Content] = visit(Node#xmlElement.content, Env),
+                Content#xmlText.value
+        end,
+    #xmlAttribute{name = Name, value = Value};
 
 visit(Node = #xmlElement{attributes = [Attr | Rest]}, Attributes, Env) ->
     visit(Node#xmlElement{attributes = Rest}, [Attr | Attributes], Env);
