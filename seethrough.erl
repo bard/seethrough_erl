@@ -64,6 +64,12 @@ apply_template(File, Env) ->
     xmerl:export_simple(
       [visit(Tree, Env)], xmerl_xml).
 
+%%--------------------------------------------------------------------
+%% Function: visit/2
+%% Purpose: Visit the XML tree, transforming the elements that need
+%%          transformation.
+%%--------------------------------------------------------------------
+
 visit([Node | Rest], Env) ->
     NHead = visit(Node, Env),
     NTail = visit(Rest, Env),
@@ -81,6 +87,11 @@ visit(Node, _Env) when is_record(Node, xmlText) ->
     Node; 
 visit(Node, _Env) ->
     Node.
+
+%%--------------------------------------------------------------------
+%% Function: visit/3
+%% Purpose: Transforms an XML element.
+%%--------------------------------------------------------------------
 
 visit(Node = #xmlElement{attributes =
                          [#xmlAttribute{name = 'e:content',
@@ -130,6 +141,12 @@ visit(Node = #xmlElement{attributes = []}, Attributes, Env) ->
 %%% Utilities
 %%%-------------------------------------------------------------------
 
+%%--------------------------------------------------------------------
+%% Function: env_lookup/3
+%% Purpose: Look up a variable in the given environment and return
+%%          its value.
+%%--------------------------------------------------------------------
+
 env_lookup(VarName, Env) when is_list(VarName) ->
     env_lookup(list_to_atom(VarName), Env);
 env_lookup(VarName, Env) ->
@@ -141,4 +158,3 @@ env_lookup(VarName, Env) ->
         _Else ->
             {value, "ENV ERROR"}
     end.
-
