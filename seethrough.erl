@@ -150,11 +150,11 @@ visit(Node = #xmlElement{attributes = []}, Attributes, Env) ->
 env_lookup(VarName, Env) when is_list(VarName) ->
     env_lookup(list_to_atom(VarName), Env);
 env_lookup(VarName, Env) ->
-    case lists:keysearch(VarName, 1, Env) of
-        {value, {_Key, {Module, FunName, Args}}} ->
+    case proplists:get_value(VarName, Env) of
+        undefined ->
+            {value, "ENV ERROR"};
+        {Module, FunName, Args} ->
             {value, apply(Module, FunName, Args)};
-        {value, {_Key, Value}} ->
-            {value, Value};
-        _Else ->
-            {value, "ENV ERROR"}
+        Value ->
+            {value, Value}
     end.
