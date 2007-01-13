@@ -103,12 +103,38 @@ visit(Node = #xmlElement{attributes =
                           attributes = Rest},
           Attributes, Env);
 
+%%--------------------------------------------------------------------
+%% Transform an element with a "e:replace" attribute to a text node
+%% with value looked up in the environment.
+%%
+%% For example:
+%%
+%%   My name is <span e:replace="name"/>.
+%%
+%% If in the environment "name" is "Jim", it will be transformed to:
+%%
+%%   My name is Jim.
+%%--------------------------------------------------------------------
+
 visit(_Node = #xmlElement{attributes =
                          [#xmlAttribute{name = 'e:replace',
                                         value = VarName} | _RAttributes]},
       _Attributes, Env) ->
     {value, VarValue} = env_lookup(VarName, Env),
     #xmlText{value = VarValue};
+
+%%--------------------------------------------------------------------
+%% Transform an element with a "e:content" attribute to an equal
+%% element having the value looked up in the environment as content.
+%%
+%% For example:
+%%
+%%   My name is <span class="font-weight: bold;" e:replace="name"/>.
+%%
+%% If in the environment name" is "Jim", it will be transformed to:
+%%
+%%   My name is <span class="font-weight: bold;">Jim</span>.
+%%--------------------------------------------------------------------
 
 visit(Node = #xmlElement{attributes =
                          [#xmlAttribute{name = 'e:repeat',
