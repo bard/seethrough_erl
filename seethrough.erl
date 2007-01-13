@@ -124,6 +124,28 @@ visit(_Node = #xmlElement{attributes =
     #xmlText{value = VarValue};
 
 %%--------------------------------------------------------------------
+%% Trasform an element with "e:condition" attribute into empty text
+%% node (effectively removing it from the document) if the looked up
+%% value pointed by the attribute is false or undefined.
+%%--------------------------------------------------------------------
+
+visit(Node = #xmlElement{attributes =
+                         [#xmlAttribute{name = 'e:condition',
+                                        value = VarName} | RAttributes]},
+      Attributes, Env) ->
+
+    case env_lookup(VarName, Env) of
+        {value, false} ->
+            #xmlText{value = ""};
+        {value, undefined} ->
+            #xmlText{value = ""};
+        {value, _VarValue} ->
+            visit(Node#xmlElement{attributes = RAttributes}, Attributes, Env);
+        undefined ->
+            #xmlText{value = ""}
+    end;
+
+%%--------------------------------------------------------------------
 %% Transform an element with a "e:content" attribute to an equal
 %% element having the value looked up in the environment as content.
 %%
@@ -235,7 +257,7 @@ env_lookup(VarName, Env) when is_list(VarName) ->
 env_lookup(VarName, Env) ->
     case proplists:get_value(VarName, Env) of
         undefined ->
-            {value, "ENV ERROR"};
+            undefined;
         {Module, FunName, Args} ->
             {value, apply(Module, FunName, Args)};
         Value ->
