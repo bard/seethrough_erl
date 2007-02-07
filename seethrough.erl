@@ -6,6 +6,10 @@
 %%%
 %%% Copyright (c) 2006-2007 Massimiliano Mirra.
 %%%
+%%% Contributors:
+%%%
+%%%   Joel Reymont <joelr1 [at] gmail [dot] com>
+%%%
 %%% Redistribution and use in source and binary forms, with or without
 %%% modification, are permitted provided that the following conditions
 %%% are met:
@@ -37,21 +41,19 @@
 
 -module(seethrough).
 
--include("/usr/lib/erlang/lib/xmerl-1.0.5/include/xmerl.hrl").
--compile(export_all).
+-include("xmerl.hrl").
+-compile([export_all]).
 
 %%%-------------------------------------------------------------------
 %%% Example
 %%%-------------------------------------------------------------------
 
-test() ->
-    io:format(
-      apply_template("test.html", 
-          [{title, "Space"},
-           {alignment, "center"},
-           {subtitle, {?MODULE, get_subtitle, []}},
-           {background_color, "blue_skies"},
-           {crew, {? MODULE, get_crew, []}}])).
+env() ->
+    [{title, "Space"},
+     {alignment, "center"},
+     {subtitle, {?MODULE, get_subtitle, []}},
+     {background_color, "blue_skies"},
+     {crew, {? MODULE, get_crew, []}}].
 
 get_subtitle() ->
     "The last frontier...".
@@ -71,46 +73,60 @@ get_crew() ->
 
 apply_template(File, Env) ->
     {Tree, _Misc} = xmerl_scan:file(File),
-    xmerl:export_simple(
-      [visit(Tree, Env)], xmerl_xml).
+    Closures = visit(Tree),
+    Tree1 = render(Closures, Env),
+    xmerl:export_simple(lists:flatten([Tree1]), xmerl_xml,
+                        [#xmlAttribute{name = prolog, value = ""}]).
 
 %%--------------------------------------------------------------------
-%% Function: visit/2
+%% Function: visit/1
 %% Purpose: Visit the XML tree, transforming the elements that need
 %%          transformation.
 %%--------------------------------------------------------------------
 
-visit([Node | Rest], Env) ->
-    NHead = visit(Node, Env),
-    NTail = visit(Rest, Env),
+visit([Node | Rest]) ->
+    NHead = visit(Node),
+    NTail = visit(Rest),
     if
         is_list(NHead) ->
             NHead ++ NTail;
         true ->
             [ NHead | NTail ]
     end;
-visit([], _Env) ->
-    [];    
-visit(Node, Env) when is_record(Node, xmlElement) ->
-    visit(Node, [], Env);
-visit(Node, _Env) when is_record(Node, xmlText) ->
-    Node; 
-visit(Node, _Env) ->
-    Node.
+
+visit([]) ->
+    [];
+
+visit(Node) when is_record(Node, xmlElement) ->
+    visit(Node, []);
+
+visit(Node) ->
+    fun(_) -> Node end.
 
 %%--------------------------------------------------------------------
-%% Function: visit/3
-%% Purpose: Transforms an XML element.
+%% Transform an element with a "e:content" attribute to an equal
+%% element having the value looked up in the environment as content.
+%%
+%% For example:
+%%
+%%   My name is <span class="font-weight: bold;" e:content="name"/>.
+%%
+%% If in the environment name" is "Jim", it will be transformed to:
+%%
+%%   My name is <span class="font-weight: bold;">Jim</span>.
 %%--------------------------------------------------------------------
 
 visit(Node = #xmlElement{attributes =
                          [#xmlAttribute{name = 'e:content',
                                         value = VarName} | Rest]},
-      Attributes, Env) ->
-    {value, VarValue} = env_lookup(VarName, Env),
-    visit(Node#xmlElement{content = [#xmlText{value = VarValue}],
-                          attributes = Rest},
-          Attributes, Env);
+      Attributes) ->
+    fun(Env) ->
+            {value, VarValue} = env_lookup(VarName, Env),
+            Fun = visit(Node#xmlElement{content = [#xmlText{value = VarValue}],
+                                        attributes = Rest},
+                        Attributes),
+            render(Fun, Env)
+    end;
 
 %%--------------------------------------------------------------------
 %% Transform an element with a "e:replace" attribute to a text node
@@ -126,11 +142,24 @@ visit(Node = #xmlElement{attributes =
 %%--------------------------------------------------------------------
 
 visit(_Node = #xmlElement{attributes =
-                         [#xmlAttribute{name = 'e:replace',
-                                        value = VarName} | _RAttributes]},
-      _Attributes, Env) ->
-    {value, VarValue} = env_lookup(VarName, Env),
-    #xmlText{value = VarValue};
+                          [#xmlAttribute{name = 'e:replace',
+                                         value = VarName} | _RAttributes]},
+      _Attributes) ->
+    fun(Env) ->
+            {value, VarValue} = env_lookup(VarName, Env),
+            #xmlText{value = VarValue}
+    end;
+
+%%---------------------------------------------------------------------
+%% Just like replace but plugs in the results of template application.
+%%---------------------------------------------------------------------
+
+visit(_Node = #xmlElement{attributes =
+                          [#xmlAttribute{name = 'e:include',
+                                         value = FileName} | _RAttributes]},
+      _Attributes) ->
+    {Tree, _Misc} = xmerl_scan:file(FileName),
+    visit(Tree);
 
 %%--------------------------------------------------------------------
 %% Trasform an element with "e:condition" attribute into empty text
@@ -141,40 +170,35 @@ visit(_Node = #xmlElement{attributes =
 visit(Node = #xmlElement{attributes =
                          [#xmlAttribute{name = 'e:condition',
                                         value = VarName} | RAttributes]},
-      Attributes, Env) ->
-
-    case env_lookup(VarName, Env) of
-        {value, false} ->
-            #xmlText{value = ""};
-        {value, undefined} ->
-            #xmlText{value = ""};
-        {value, _VarValue} ->
-            visit(Node#xmlElement{attributes = RAttributes}, Attributes, Env);
-        undefined ->
-            #xmlText{value = ""}
+      Attributes) ->
+    fun(Env) ->
+            case env_lookup(VarName, Env) of
+                {value, false} ->
+                    #xmlText{value = ""};
+                {value, undefined} ->
+                    #xmlText{value = ""};
+                {value, _VarValue} ->
+                    render(visit(Node#xmlElement{attributes = RAttributes},
+                                 Attributes), Env);
+                undefined ->
+                    #xmlText{value = ""}
+            end
     end;
 
-%%--------------------------------------------------------------------
-%% Transform an element with a "e:content" attribute to an equal
-%% element having the value looked up in the environment as content.
-%%
-%% For example:
-%%
-%%   My name is <span class="font-weight: bold;" e:replace="name"/>.
-%%
-%% If in the environment name" is "Jim", it will be transformed to:
-%%
-%%   My name is <span class="font-weight: bold;">Jim</span>.
-%%--------------------------------------------------------------------
+%%---------------------------------------------------------------------
+%% e:repeat
+%%---------------------------------------------------------------------
 
 visit(Node = #xmlElement{attributes =
                          [#xmlAttribute{name = 'e:repeat',
                                         value = ContextName} | RAttributes]},
-      Attributes, Env) ->
-    {value, CloneEnvs} = env_lookup(ContextName, Env),
-
-    [ visit(Node#xmlElement{attributes = RAttributes}, Attributes, CloneEnv)
-      || CloneEnv <- CloneEnvs ];
+      Attributes) ->
+    Closures = visit(Node#xmlElement{attributes = RAttributes},
+                     Attributes),
+    fun(Env) ->
+            {value, CloneEnvs} = env_lookup(ContextName, Env),
+            [ render(Closures, E) || E <- CloneEnvs ]
+    end;
 
 %%--------------------------------------------------------------------
 %% Transform an <e:attr> element into an attribute that will be
@@ -219,44 +243,54 @@ visit(Node = #xmlElement{attributes =
 %% following is equivalent to the previous example:
 %%
 %%   <div><e:attr name="class" value="cl"/></div>
-%% 
+%%
 %%--------------------------------------------------------------------
 
 visit(Node = #xmlElement{name = 'e:attr',
-                         attributes = Attributes}, _Attributes, Env) ->
-    {value, AttrForName} = lists:keysearch(name, #xmlAttribute.name, Attributes),
+                         attributes = Attributes}, _Attributes) ->
+    {value, AttrForName} = lists:keysearch(name, #xmlAttribute.name,
+                                           Attributes),
     Name = list_to_atom(AttrForName#xmlAttribute.value),
 
-    Value = 
-        case lists:keysearch(value, #xmlAttribute.name, Attributes) of
-            {value, AttrForValue} ->
-                VarName = list_to_atom(AttrForValue#xmlAttribute.value),
-                {value, VarValue} = env_lookup(VarName, Env),
-                VarValue;
-            false ->
-                [Content] = visit(Node#xmlElement.content, Env),
-                Content#xmlText.value
-        end,
-    #xmlAttribute{name = Name, value = Value};
+    case lists:keysearch(value, #xmlAttribute.name, Attributes) of
+        {value, AttrForValue} ->
+            VarName = list_to_atom(AttrForValue#xmlAttribute.value),
+            fun(Env) ->
+                    {value, VarValue} = env_lookup(VarName, Env),
+                    #xmlAttribute{name = Name, value = VarValue}
+            end;
+        false ->
+            Closures = visit(Node#xmlElement.content),
+            fun(Env) ->
+                    [Content] = render(Closures, Env),
+                    Value = Content#xmlText.value,
+                    #xmlAttribute{name = Name, value = Value}
+            end
+    end;
 
-visit(Node = #xmlElement{attributes = [Attr | Rest]}, Attributes, Env) ->
-    visit(Node#xmlElement{attributes = Rest}, [Attr | Attributes], Env);
+%%--------------------------------------------------------------------
 
-visit(Node = #xmlElement{attributes = []}, Attributes, Env) ->
-    {ResultAttributes, ResultContent} = 
-        lists:partition(fun(N) -> is_record(N, xmlAttribute) end,
-                        visit(Node#xmlElement.content, Env)),    
-    Node#xmlElement{attributes = Attributes ++ ResultAttributes,
-                    content = ResultContent}.
+visit(Node = #xmlElement{attributes = [Attr | Rest]}, Attributes) ->
+    visit(Node#xmlElement{attributes = Rest}, [Attr | Attributes]);
 
-
+visit(Node = #xmlElement{attributes = []}, Attributes) ->
+    Closures = visit(Node#xmlElement.content),
+    fun(Env) ->
+            {ResultAttributes, ResultContent} =
+                lists:partition(fun(N) -> is_record(N, xmlAttribute)
+                                end,
+                                render(Closures, Env)),
+            Node#xmlElement{attributes = Attributes ++
+                            ResultAttributes,
+                            content = ResultContent}
+    end.
 
 %%%-------------------------------------------------------------------
 %%% Utilities
 %%%-------------------------------------------------------------------
 
 %%--------------------------------------------------------------------
-%% Function: env_lookup/3
+%% Function: env_lookup/2
 %% Purpose: Look up a variable in the given environment and return
 %%          its value.
 %%--------------------------------------------------------------------
@@ -269,6 +303,77 @@ env_lookup(VarName, Env) ->
             undefined;
         {Module, FunName, Args} ->
             {value, apply(Module, FunName, Args)};
+        F when is_function(F) ->
+            {value, F()};
         Value ->
             {value, Value}
     end.
+
+%%---------------------------------------------
+%% Evaluate closures using a given environment
+%%---------------------------------------------
+
+render(Closures, Env) when is_list(Closures) ->
+    lists:flatten([ Fun(Env) || Fun <- Closures]);
+
+render(Fun, Env) ->
+    Fun(Env).
+
+%%%-------------------------------------------------------------------
+%%% Test suite
+%%%-------------------------------------------------------------------
+
+process(String, Env) ->
+    {Tree, _} = xmerl_scan:string(String),
+    Closures = visit(Tree),
+    Tree1 = render(Closures, Env),
+    Tree2 = lists:flatten([Tree1]),
+    XML = xmerl:export_simple(Tree2, xmerl_xml,
+                              [#xmlAttribute{name = prolog,value = ""}]),
+    lists:flatten(XML).
+
+test1() ->
+    X = process("<title e:content=\"title\"/>", [{title, "title"}]),
+    "<title>title</title>" = X.
+
+test2() ->
+    X = process("<span e:replace=\"subtitle\"/>", [{subtitle, "subtitle"}]),
+    "subtitle" = X.
+
+test3() ->
+    X = process("<h2><e:attr name=\"style\">font-weight: bold;</e:attr></h2>", []),
+     "<h2 style=\"font-weight: bold;\"/>" = X.
+
+test4() ->
+    X = process("<h2><e:attr name=\"align\"><span e:replace=\"alignment\"/></e:attr></h2>",
+                [{alignment, "center"}]),
+    "<h2 align=\"center\"/>" = X.
+
+test5() ->
+    X = process("<h2><e:attr name=\"bgcolor\" value=\"color\"/></h2>",
+                [{color, "blue"}]),
+    "<h2 bgcolor=\"blue\"/>" = X.
+
+test6() ->
+    X = process("<div e:condition=\"error\">Boom!</div>", [{error, false}]),
+    "" = X,
+    X1 = process("<div e:condition=\"error\">Boom!</div>", []),
+    "" = X1,
+    X2 = process("<div e:condition=\"error\">Boom!</div>", [{error, true}]),
+    "<div>Boom!</div>" = X2.
+
+test7() ->
+    S = "<tbody><tr e:repeat=\"crew\"><td e:content=\"address\"/></tr></tbody>",
+     F = fun() -> [[{address, "address"}]] end,
+    X = process(S, [{crew, F}]),
+    "<tbody><tr><td>address</td></tr></tbody>" = X.
+
+test() ->
+    test1(),
+    test2(),
+    test3(),
+    test4(),
+    test5(),
+    test6(),
+    test7(),
+    ok.
