@@ -42,11 +42,13 @@
 -module(seethrough).
 
 -include("xmerl.hrl").
--export([render/2, test/0]).
--compile([export_all]).
+-export([render/2, render/3,
+         compile/1, exec/2,
+         apply_template/2, apply_template/3,
+         get_attr_value/2]).
 
 %-define(DEBUG(Message, Args), io:format("~s~n", [io_lib:format(Message, Args)])).
--define(DEBUG(Message, Args), nop).
+-define(DEBUG(Message, Args), no_op).
 
 %%%-------------------------------------------------------------------
 %%% Sample environment
@@ -75,7 +77,7 @@
 %%%-------------------------------------------------------------------
 
 %%--------------------------------------------------------------------
-%% Function: render/3
+%% Function: render/2, render/3
 %% Purpose: apply a template file to an environment, optionally within
 %%          a layout (aka super-template).  The result of content
 %%          rendering is available to the layout as "content".
@@ -88,35 +90,43 @@
 %%             <div e:replace="content"/>
 %%--------------------------------------------------------------------
 
-render({layout, Layout, [{content, Content}]}, Env) ->
-    Tree = apply_template(Layout,
-                          [{content, apply_template(Content, Env)} | Env]),
-    xmerl:export_simple(lists:flatten([Tree]),
-                        xmerl_xml,
-                        [#xmlAttribute{name = prolog, value = ""}]);
 render(Template, Env) ->
-    Tree = apply_template(Template, Env),
+    render(Template, Env, []).
+
+render(Template, Env, Handlers) ->
+    Tree = render1(Template, Env, Handlers),
     xmerl:export_simple(lists:flatten([Tree]),
                         xmerl_xml,
                         [#xmlAttribute{name = prolog, value = ""}]).
 
+render1({layout, Layout, [{content, Content}]}, Env, Handlers) ->
+    apply_template(Layout,
+                   [{content, apply_template(Content, Env, Handlers)} | Env],
+                   Handlers);
+render1(Template, Env, Handlers) ->
+    apply_template(Template, Env, Handlers).
+
 
 %%--------------------------------------------------------------------
-%% Function: apply_template/2
-%% Purpose: receives an term representing an XML parse, as output by
+%% Function: apply_template/2, apply_template/3
+%% Purpose: receives a term representing an XML parse, as output by
 %%          xmerl_scan:file/1 and xmerl_scan:string/1, and returns a
 %%          transformed XML tree.
 %%----------------------------------------------------------------------
 
-apply_template(Tree, Env) when is_record(Tree, xmlElement) ->
-    Closures = compile(Tree),
-    exec(Closures, Env);
-apply_template({string, String}, Env) ->
+apply_template(Tree, Env) ->
+    apply_template(Tree, Env, []).
+
+apply_template({string, String}, Env, Handlers) ->
     {#xmlElement{} = Tree, _} = xmerl_scan:string(String),
-    apply_template(Tree, Env); 
-apply_template({file, File}, Env) ->
+    apply_template(Tree, Env, Handlers); 
+apply_template({file, File}, Env, Handlers) ->
     {#xmlElement{} = Tree, _} = xmerl_scan:file(File),
-    apply_template(Tree, Env).
+    apply_template(Tree, Env, Handlers);
+apply_template(Tree, Env, Handlers) when is_record(Tree, xmlElement) ->
+    Closures = dynvar:with([{handlers, Handlers}],
+                           fun() -> compile(Tree) end),
+    exec(Closures, Env).
 
 
 %%--------------------------------------------------------------------
@@ -160,15 +170,17 @@ compile(Node) ->
 compile(Node = #xmlElement{attributes =
                          [#xmlAttribute{name = 'e:content',
                                         value = VarName} | Rest]},
-      Attributes) ->
+        Attributes) ->
     fun(Env) ->
             ?DEBUG("Expanding e:content", []),
-            {value, VarValue} = env_lookup(VarName, Env),
+            
+            VarValue = lookup(first, VarName, Env),
             Fun = compile(Node#xmlElement{content = [normalize_value(VarValue)],
                                           attributes = Rest},
                           Attributes),
             exec(Fun, Env)
     end;
+
 
 %%--------------------------------------------------------------------
 %% Transform an element with a "e:replace" attribute to a text node
@@ -189,7 +201,7 @@ compile(_Node = #xmlElement{attributes =
       _Attributes) ->
     fun(Env) ->
             ?DEBUG("Expanding e:replace", []),
-            {value, VarValue} = env_lookup(VarName, Env),
+            VarValue = lookup(first, VarName, Env),
             normalize_value(VarValue)
     end;
 
@@ -216,16 +228,14 @@ compile(Node = #xmlElement{attributes =
       Attributes) ->
     fun(Env) ->
             ?DEBUG("Expanding e:condition", []),
-            case env_lookup(VarName, Env) of
-                {value, false} ->
+            case lookup(first, VarName, Env) of
+                false ->
                     #xmlText{value = ""};
-                {value, undefined} ->
-                    #xmlText{value = ""};
-                {value, _VarValue} ->
-                    exec(compile(Node#xmlElement{attributes = RAttributes},
-                                 Attributes), Env);
                 undefined ->
-                    #xmlText{value = ""}
+                    #xmlText{value = ""};
+                _Value ->
+                    exec(compile(Node#xmlElement{attributes = RAttributes},
+                                 Attributes), Env)
             end
     end;
 
@@ -242,8 +252,8 @@ compile(Node = #xmlElement{attributes =
 
     fun(Env) ->
             ?DEBUG("Expanding e:repeat", []),
-            {value, CloneEnvs} = env_lookup(ContextName, Env),
-            [ exec(Closures, E) || E <- CloneEnvs ]
+            CloneEnvs = lookup(all, ContextName, Env),
+            [exec(Closures, E) || {_C, E} <- CloneEnvs]
     end;
 
 %%--------------------------------------------------------------------
@@ -294,51 +304,79 @@ compile(Node = #xmlElement{attributes =
 
 compile(Node = #xmlElement{name = 'e:attr',
                          attributes = Attributes}, _Attributes) ->
-    {value, AttrForName} = lists:keysearch(name, #xmlAttribute.name, Attributes),
-    Name = list_to_atom(AttrForName#xmlAttribute.value),
 
-    case lists:keysearch(value, #xmlAttribute.name, Attributes) of
-        {value, AttrForValue} ->
-            VarName = list_to_atom(AttrForValue#xmlAttribute.value),
-            fun(Env) ->
-                    ?DEBUG("Expanding e:attr", []),
-                    {value, VarValue} = env_lookup(VarName, Env),
-                    #xmlAttribute{name = Name, value = VarValue}
-            end;
-        false ->
+    TargetAttrName = get_attr_value(name, Attributes),
+    case get_attr_value(value, Attributes) of
+        undefined ->
             Closures = compile(Node#xmlElement.content),
             fun(Env) ->
                     ?DEBUG("Expanding e:attr", []),
 
-                    Value =
+                    TargetAttrValue =
                         lists:foldr(
                           fun(#xmlText{value = V}, Acc) ->
                                   [V|Acc]
                           end, [], exec(Closures, Env)),
 
-                    #xmlAttribute{name = Name, value = Value}
+                    #xmlAttribute{name = list_to_atom(TargetAttrName),
+                                  value = TargetAttrValue}
+            end;        
+        VarName ->
+            fun(Env) ->
+                    ?DEBUG("Expanding e:attr", []),
+                    
+                    TargetAttrValue = lookup(first, list_to_atom(VarName), Env),
+                    
+                    #xmlAttribute{name = list_to_atom(TargetAttrName),
+                                  value = TargetAttrValue}
             end
     end;
+
 
 %%--------------------------------------------------------------------
 %% Default behaviour
 %%--------------------------------------------------------------------
 
+%% Iterate on attributes.
+
 compile(Node = #xmlElement{attributes = [Attr | Rest]}, Attributes) ->
     compile(Node#xmlElement{attributes = Rest}, [Attr | Attributes]);
 
-compile(Node = #xmlElement{attributes = []}, Attributes) ->
-    Closures = compile(Node#xmlElement.content),
-    fun(Env) ->
-            {ResultAttributes, ResultContent} =
-                lists:partition(fun(N) -> is_record(N, xmlAttribute)
-                                end,
-                                exec(Closures, Env)),
-            Node#xmlElement{attributes = Attributes ++
-                            ResultAttributes,
-                            content = ResultContent}
-    end.
+%% No more attributes, proceed to element name.  Check namespace and
+%% possibly invoke external handler, otherwise process internally.
 
+compile(Node = #xmlElement{attributes = [],
+                           nsinfo = NamespaceInfo,
+                           namespace = NamespaceData,
+                           content = Content},
+        Attributes) ->
+
+    Handler = 
+        case NamespaceInfo of
+            {Prefix, _Name} ->
+                NamespaceURI = proplists:get_value(Prefix, NamespaceData#xmlNamespace.nodes),
+                proplists:get_value(NamespaceURI, dynvar:fetch(handlers));
+            [] ->
+                undefined;
+            undefined ->
+                undefined
+        end,
+
+    case Handler of
+        undefined ->
+            Closures = compile(Content),
+            fun(Env) ->
+                    Results = exec(Closures, Env),
+
+                    {ResultAttributes, ResultContents} =
+                        lists:partition(fun(N) -> is_record(N, xmlAttribute) end, Results),
+
+                    Node#xmlElement{attributes = Attributes ++ ResultAttributes,
+                                    content = ResultContents}
+            end;
+        _ ->
+            Handler:compile(Node, Attributes)
+    end.
 
 %%%-------------------------------------------------------------------
 %%% Utilities
@@ -359,29 +397,6 @@ normalize_value(VarValue) when is_integer(VarValue) ->
 normalize_value(VarValue) ->
     #xmlText{value = VarValue}.
 
-
-%%--------------------------------------------------------------------
-%% Function: env_lookup/2
-%% Purpose: Look up a variable in the given environment and return
-%%          its value.
-%%--------------------------------------------------------------------
-
-env_lookup(VarName, Env) when is_list(VarName) ->
-    env_lookup(list_to_atom(VarName), Env);
-env_lookup(VarName, Env) ->
-    ?DEBUG("Looking for ~p in ~p", [VarName, Env]),
-    case proplists:get_value(VarName, Env) of
-        undefined ->
-            ?DEBUG("Environment lookup for '~p' failed.", [VarName]),
-            undefined;
-        {Module, FunName, Args} ->
-            {value, apply(Module, FunName, Args)};
-        F when is_function(F) ->
-            {value, F()};
-        Value ->
-            {value, Value}
-    end.
-
 %%---------------------------------------------
 %% Evaluate closures using a given environment
 %%---------------------------------------------
@@ -392,77 +407,27 @@ exec(Closures, Env) when is_list(Closures) ->
 exec(Fun, Env) ->
     Fun(Env).
 
-%%%-------------------------------------------------------------------
-%%% Test suite
-%%%-------------------------------------------------------------------
+%%---------------------------------------------
+%% Given a list af attribute records, search
+%% for the attribute with the given name and
+%% return its value.
+%%---------------------------------------------
 
-stringify(Tree) ->
-    lists:flatten(
-      xmerl:export_simple(lists:flatten([Tree]),
-                          xmerl_xml,
-                          [#xmlAttribute{name = prolog,value = ""}])).
-    
-test1() ->
-    X = apply_template({string, "<title e:content=\"title\"/>"}, [{title, "title"}]),
-    "<title>title</title>" = stringify(X).
+get_attr_value(AttrName, Attributes) ->
+    case lists:keysearch(AttrName, #xmlAttribute.name, Attributes) of
+        {value, Attribute} ->
+            Attribute#xmlAttribute.value;
+        false ->
+            undefined
+    end.
 
-test2() ->
-    X = apply_template({string, "<span e:replace=\"subtitle\"/>"}, [{subtitle, "subtitle"}]),
-    "subtitle" = stringify(X).
 
-test3() ->
-    X = apply_template({string, "<h2><e:attr name=\"style\">font-weight: bold;</e:attr></h2>"}, []),
-    "<h2 style=\"font-weight: bold;\"/>" = stringify(X).
 
-test4() ->
-    X = apply_template({string, "<h2><e:attr name=\"align\"><span e:replace=\"alignment\"/></e:attr></h2>"},
-                [{alignment, "center"}]),
-    "<h2 align=\"center\"/>" = stringify(X).
 
-test5() ->
-    X = apply_template({string, "<h2><e:attr name=\"bgcolor\" value=\"color\"/></h2>"},
-                [{color, "blue"}]),
-    "<h2 bgcolor=\"blue\"/>" = stringify(X).
-
-test6() ->
-    X = apply_template({string, "<div e:condition=\"error\">Boom!</div>"}, [{error, false}]),
-    "" = stringify(X),
-    X1 = apply_template({string, "<div e:condition=\"error\">Boom!</div>"}, []),
-    "" = stringify(X1),
-    X2 = apply_template({string, "<div e:condition=\"error\">Boom!</div>"}, [{error, true}]),
-    "<div>Boom!</div>" = stringify(X2).
-
-test7() ->
-    S = "<tbody><tr e:repeat=\"crew\"><td e:content=\"address\"/></tr></tbody>",
-    F = fun() -> [[{address, "address"}]] end,
-    X = apply_template({string, S}, [{crew, F}]),
-    "<tbody><tr><td>address</td></tr></tbody>" = stringify(X).
-
-test8() ->
-    S = "<select><option e:repeat=\"names\">" ++
-        "<span e:replace=\"name\"/>" ++
-        "<e:attr name=\"value\" value=\"name\"/>" ++
-        "<e:attr e:condition=\"current\" name=\"selected\">selected</e:attr>" ++
-        "</option></select>",
-    X = apply_template({string, S}, [{names, [[{name, "jim"}, {current, true}],
-                                       [{name, "scotty"}]]}]),
-    "<select><option value=\"jim\" selected=\"selected\">jim</option>" ++
-        "<option value=\"scotty\">scotty</option></select>" = stringify(X).
-
-test9() ->
-    S = "<span e:content=\"foreign\"/>",
-    {El, _} = xmerl_scan:string("<i>hello</i>"),
-    X = apply_template({string, S}, [{foreign, El}]),
-    "<span><i>hello</i></span>" = stringify(X).
-
-test() ->
-    test1(),
-    test2(),
-    test3(),
-    test4(),
-    test5(),
-    test6(),
-    test7(),
-    test8(),
-    test9(),
-    ok.
+lookup(first, Path, Env) ->
+    case env:lookup(first, Path, Env) of
+        undefined         -> undefined;
+        {_VarName, Value} -> Value
+    end;
+lookup(all, Path, Env) ->
+    env:lookup(all, Path, Env).
