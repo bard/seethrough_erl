@@ -45,7 +45,8 @@
 -export([render/2, render/3,
          compile/1, exec/2,
          apply_template/2, apply_template/3,
-         get_attr_value/2]).
+         get_attr_value/2,
+         lookup/3]).
 
 %-define(DEBUG(Message, Args), io:format("~s~n", [io_lib:format(Message, Args)])).
 -define(DEBUG(Message, Args), no_op).

@@ -78,12 +78,7 @@ test_handle_element_with_custom_namespace() ->
     X = seethrough:apply_template({string, S}, [], [{'http://hyperstruct.net', ?MODULE}]),
     "<div xmlns:ex=\"http://hyperstruct.net\">http://foo.bar.com</div>" = stringify(X).
 
-test_handle_element_with_custom_namespace_and_content_1() ->
-    S = "<div xmlns:ex=\"http://hyperstruct.net\"><ex:container>hello</ex:container></div>",
-    X = seethrough:apply_template({string, S}, [], [{'http://hyperstruct.net', ?MODULE}]),
-    "<div xmlns:ex=\"http://hyperstruct.net\"><div>hello</div></div>" = stringify(X).
-
-test_handle_element_with_custom_namespace_and_content_2() ->
+test_handle_element_with_custom_namespace_as_child() ->
     S = "<div xmlns:ex=\"http://hyperstruct.net\">" ++
         "<a><e:attr name=\"href\"><ex:path for=\"config\"/></e:attr></a>" ++
         "</div>",
@@ -91,12 +86,24 @@ test_handle_element_with_custom_namespace_and_content_2() ->
     "<div xmlns:ex=\"http://hyperstruct.net\">" ++
         "<a href=\"/app/prefix/config\"/></div>" = stringify(X).
 
+test_handle_element_with_custom_namespace_and_content_1() ->
+    S = "<div xmlns:ex=\"http://hyperstruct.net\"><ex:container>hello</ex:container></div>",
+    X = seethrough:apply_template({string, S}, [], [{'http://hyperstruct.net', ?MODULE}]),
+    "<div xmlns:ex=\"http://hyperstruct.net\"><div>hello</div></div>" = stringify(X).
+
+test_handle_element_with_custom_namespace_and_content_2() ->
+    S = "<div xmlns:ex=\"http://hyperstruct.net\">" ++
+        "<ex:a><e:attr name=\"href\" value=\"bar\"/></ex:a>" ++
+        "</div>",
+    X = seethrough:apply_template({string, S}, [{bar, "hello"}],
+                                  [{'http://hyperstruct.net', ?MODULE}]),
+    "<div xmlns:ex=\"http://hyperstruct.net\"><ex:a href=\"hello\"/></div>" = stringify(X).
+
 test_values_in_environment_can_be_functions() ->
     S = "<span e:replace=\"test\"/>",
     F = fun(_Env) -> #xmlText{value = "hello"} end,
     X = seethrough:apply_template({string, S}, [{foo, "bar"}, {test, F}]),
-    stringify(X).
-
+    "hello" = stringify(X).
 
 
 %%%-------------------------------------------------------------------
@@ -108,12 +115,29 @@ stringify(Tree) ->
       xmerl:export_simple(lists:flatten([Tree]),
                           xmerl_xml,
                           [#xmlAttribute{name = prolog,value = ""}])).
-    
+
+
+%%%-------------------------------------------------------------------
+%%% Callbacks
+%%%-------------------------------------------------------------------
+
+compile(Node = #xmlElement{nsinfo = {_, "a"}, content = Content}, Attributes) ->
+    Closures = seethrough:compile(Content),
+    fun(Env) ->
+            Results = seethrough:exec(Closures, Env),
+            
+            {ResultAttributes, ResultContents} =
+                lists:partition(fun(N) -> is_record(N, xmlAttribute) end, Results),
+
+            Node#xmlElement{attributes = Attributes ++ ResultAttributes,
+                            content = ResultContents}
+    end;
 
 compile(#xmlElement{nsinfo = {_, "url"}}, _Attributes) ->
     fun(_Env) ->
             #xmlText{value = "http://foo.bar.com"}
     end;
+
 compile(#xmlElement{nsinfo = {_, "container"}, content = Content},
         _Attributes) ->
     Closures = seethrough:compile(Content),
