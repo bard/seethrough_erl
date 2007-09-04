@@ -332,6 +332,20 @@ compile(Node = #xmlElement{name = 'e:attr',
             end
     end;
 
+%%--------------------------------------------------------------------
+%% Utility tag.  Output current environment.
+%%--------------------------------------------------------------------
+
+compile(_Node = #xmlElement{name = 'e:debug',
+                          attributes = Attributes}, _Attributes) ->
+    DebugTarget = get_attr_value(show, Attributes),
+    case DebugTarget of
+        "env" ->
+            fun(Env) ->
+                    #xmlText{value = io_lib:format("~p", [Env])}
+            end
+    end;
+
 
 %%--------------------------------------------------------------------
 %% Default behaviour
